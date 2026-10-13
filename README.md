@@ -1,6 +1,10 @@
 # SimplePacketHandler
 Put an end to the if-elseif instanceof hell.
 
+## Compatibility
+
+The virion manifest declares Axolotl-PM API `5.36.0` as the minimum requirement. The Composer test environment pins Axolotl-PM `5.49.1`; see the [GitHub Actions runs](https://github.com/NhanAZ-Libraries/SimplePacketHandler/actions/workflows/test.yml) for exact results.
+
 ## API Documentation
 ### Packet Monitor
 Monitor data packets - use this if you aren't modifying the outcome of the event.<br>

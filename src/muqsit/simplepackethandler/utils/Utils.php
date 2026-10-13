@@ -6,8 +6,11 @@ namespace muqsit\simplepackethandler\utils;
 
 use Closure;
 use InvalidArgumentException;
+use pocketmine\network\mcpe\NetworkSession;
+use pocketmine\network\mcpe\protocol\ClientboundPacket;
 use pocketmine\network\mcpe\protocol\DataPacket;
 use pocketmine\network\mcpe\protocol\PacketPool;
+use pocketmine\network\mcpe\protocol\ServerboundPacket;
 use pocketmine\utils\Utils as PocketMineUtils;
 use ReflectionFunction;
 use ReflectionIntersectionType;
@@ -15,12 +18,11 @@ use ReflectionNamedType;
 use ReflectionProperty;
 use ReflectionType;
 use ReflectionUnionType;
-use function assert;
 use function count;
+use function get_class;
 use function implode;
 use function in_array;
 use function is_a;
-use function is_int;
 
 final class Utils{
 
@@ -55,7 +57,7 @@ final class Utils{
 			$names = self::groupTypes($parameter_type);
 			foreach($names as $group){
 				foreach($group as $name){
-					is_a($name, $parameter_compare, true) || throw new InvalidArgumentException("Parameter {$name} in " . PocketMineUtils::getNiceClosureName($closure) . " does not satisfy type {$parameter_compare}");
+					self::isCompatibleParameterType($name, $parameter_compare) || throw new InvalidArgumentException("Parameter {$name} in " . PocketMineUtils::getNiceClosureName($closure) . " does not satisfy type {$parameter_compare}");
 				}
 			}
 			$parsed_params[] = $names;
@@ -63,6 +65,15 @@ final class Utils{
 
 		count($parsed_params) === count($params) || throw new InvalidArgumentException(PocketMineUtils::getNiceClosureName($closure) . " must satisfy signature (" . implode(", ", $params) . ") : {$return_type}");
 		return $parsed_params;
+	}
+
+	private static function isCompatibleParameterType(string $type, string $expected) : bool{
+		return match($expected){
+			ServerboundPacket::class => is_a($type, ServerboundPacket::class, true),
+			ClientboundPacket::class => is_a($type, ClientboundPacket::class, true),
+			NetworkSession::class => is_a($type, NetworkSession::class, true),
+			default => $type === $expected
+		};
 	}
 
 	/**
@@ -94,7 +105,7 @@ final class Utils{
 					$stack[] = [$child, $index];
 				}
 			}else{
-				throw new InvalidArgumentException("Don't know how to resolve " . $type . "(" . $type::class . ")");
+				throw new InvalidArgumentException("Don't know how to resolve " . $type . "(" . get_class($type) . ")");
 			}
 		}
 		/** @var non-empty-list<non-empty-list<string>> $result */
@@ -108,36 +119,25 @@ final class Utils{
 	 */
 	public static function flattenPacketPidsFromGroups(PacketPool $pool, array $groups) : array{
 		$network_ids = [];
+		$packets = (new ReflectionProperty($pool, "pool"))->getValue($pool);
+		$packets instanceof \SplFixedArray || throw new InvalidArgumentException("Packet pool must expose a SplFixedArray-backed packet registry");
 		foreach($groups as $group){
-			if(count($group) === 1){ // perform the frequent case first
-				// union and non-composite types can be derived directly
-				$packet = $group[0];
-				assert(is_a($packet, DataPacket::class, true));
-				assert(is_int($packet::NETWORK_ID));
-				$network_ids[] = $packet::NETWORK_ID;
-			}else{
-				// intersection types (A&B) are more complex - they require a pool lookup
-				static $packets = null;
-				$packets ??= (new ReflectionProperty($pool, "pool"))->getValue($pool);
-				$found = 0;
-				/**
-				 * @var int $pid
-				 * @var DataPacket $packet
-				 */
-				foreach($packets as $pid => $packet){
-					foreach($group as $validate){
-						if(!is_a($validate, $packet::class, true)){
-							continue 2;
-						}
-					}
-					if(in_array($pid, $network_ids, true)){
-						continue;
-					}
-					$network_ids[] = $pid;
-					$found++;
+			$found = 0;
+			foreach($packets as $pid => $packet){
+				if(!$packet instanceof DataPacket){
+					continue;
 				}
-				$found > 0 || throw new InvalidArgumentException("No packets match criteria " . implode("&", $group));
+				foreach($group as $validate){
+					if(!is_a($packet, $validate)){
+						continue 2;
+					}
+				}
+				if(!in_array($pid, $network_ids, true)){
+					$network_ids[] = $pid;
+				}
+				$found++;
 			}
+			$found > 0 || throw new InvalidArgumentException("No packets match criteria " . implode("&", $group));
 		}
 		/** @var non-empty-list<int> $network_ids */
 		return $network_ids;
